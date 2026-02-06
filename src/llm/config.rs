@@ -9,8 +9,6 @@ pub struct LlmConfig {
 
 impl LlmConfig {
     pub fn from_env() -> Result<Self> {
-        dotenvy::dotenv().ok();
-
         let gemini_api_key = std::env::var("GEMINI_API_KEY")
             .context("Missing GEMINI_API_KEY in environment or .env")?;
         let gemini_model =

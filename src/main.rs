@@ -42,9 +42,20 @@ fn init_tracing(debug_mode: bool) {
         .init();
 }
 
-fn build_llm_client(real_llm: bool) -> Box<dyn LlmClient> {
+fn init_env() {
     dotenvy::dotenv().ok();
 
+    if let Ok(home) = std::env::var("HOME") {
+        let global_env = format!("{home}/GenAI/.env");
+        dotenvy::from_path(global_env).ok();
+    }
+
+    if let Ok(path) = std::env::var("GENAI_ENV_FILE") {
+        dotenvy::from_path(path).ok();
+    }
+}
+
+fn build_llm_client(real_llm: bool) -> Box<dyn LlmClient> {
     let has_key = std::env::var("GEMINI_API_KEY").is_ok();
     let should_use_real = real_llm || has_key;
 
@@ -86,6 +97,8 @@ fn resolve_skills_dir(cli: Option<String>) -> Result<String> {
 }
 
 fn main() -> Result<()> {
+    init_env();
+
     let cli = Cli::parse();
     init_tracing(cli.debug);
 
