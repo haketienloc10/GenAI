@@ -14,8 +14,8 @@ use tracing::{debug, info, warn};
 #[command(name = "genai")]
 #[command(about = "Skill-based Rust agent runtime")]
 struct Cli {
-    #[arg(long, default_value = "./skills")]
-    skills_dir: String,
+    #[arg(long)]
+    skills_dir: Option<String>,
 
     #[arg(long, default_value_t = false)]
     debug: bool,
@@ -64,11 +64,34 @@ fn build_llm_client(real_llm: bool) -> Box<dyn LlmClient> {
     Box::new(MockLlmClient::new())
 }
 
+fn resolve_skills_dir(cli: Option<String>) -> Result<String> {
+    if let Some(dir) = cli {
+        return Ok(dir);
+    }
+
+    if let Ok(dir) = std::env::var("GENAI_SKILLS_DIR") {
+        return Ok(dir);
+    }
+
+    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME env not set"))?;
+
+    let default = format!("{home}/GenAI/skills");
+    if std::path::Path::new(&default).exists() {
+        return Ok(default);
+    }
+
+    Err(anyhow::anyhow!(
+        "Skills directory not found. Use --skills-dir or set GENAI_SKILLS_DIR"
+    ))
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing(cli.debug);
 
-    let skills = scan_skills(&cli.skills_dir)?;
+    let skills_dir = resolve_skills_dir(cli.skills_dir)?;
+
+    let skills = scan_skills(&skills_dir)?;
     for skill in &skills {
         validate_skill(skill)?;
     }
