@@ -17,7 +17,6 @@ struct GeminiRequest {
 
 #[derive(Debug, Serialize)]
 struct GeminiContent {
-    role: String,
     parts: Vec<GeminiPart>,
 }
 
@@ -64,7 +63,6 @@ impl GeminiLlmClient {
     fn build_request(prompt: &str) -> GeminiRequest {
         GeminiRequest {
             contents: vec![GeminiContent {
-                role: "user".to_string(),
                 parts: vec![GeminiPart {
                     text: prompt.to_string(),
                 }],
@@ -100,20 +98,18 @@ impl LlmClient for GeminiLlmClient {
 
         let request_body = Self::build_request(prompt);
         let url = format!(
-            "{}/v1beta/models/{}:generateContent?key={}",
+            "{}/v1beta/models/{}:generateContent",
             self.config.gemini_base_url.trim_end_matches('/'),
-            effective_model,
-            self.config.gemini_api_key
+            effective_model
         );
 
         debug!(model = effective_model, "Sending request to Gemini");
 
-        dbg!(&url);
-        dbg!(&request_body);
-
         let response = self
             .http
             .post(url)
+            .header("x-goog-api-key", &self.config.gemini_api_key)
+            .header("Content-Type", "application/json")
             .json(&request_body)
             .send()
             .context("Gemini request failed (network/timeout)")?;
@@ -148,8 +144,8 @@ mod tests {
         let request = GeminiLlmClient::build_request("hello");
         let value = serde_json::to_value(&request).expect("request should be serializable");
 
-        assert_eq!(value["contents"][0]["role"], "user");
         assert_eq!(value["contents"][0]["parts"][0]["text"], "hello");
+        assert!(value["contents"][0].get("role").is_none());
     }
 
     #[test]
