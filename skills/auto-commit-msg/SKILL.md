@@ -61,7 +61,7 @@ if: "{{diff}} == ''"
 ```genai-step
 id: generate_commit_message
 type: llm
-model: executor
+model: gemini-2.5-flash
 input_vars: [diff]
 prompt: |
   You are a senior software engineer.
