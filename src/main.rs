@@ -83,19 +83,19 @@ fn main() -> Result<()> {
             }
         }
         Commands::Run { prompt } => {
-            let selector_llm = MockLlmClient::new();
-            let selected = select_skill(&prompt, &skills, Some(&selector_llm))?;
+            let selector_llm = build_llm_client(cli.real_llm);
+            let selected = select_skill(&prompt, &skills, Some(selector_llm.as_ref()))?;
             info!("Selected skill: {}", selected.metadata.name);
 
-            let mut executor = WorkflowExecutor::new(build_llm_client(cli.real_llm));
-            let result = executor.execute(
-                selected,
-                ExecutionInput {
-                    user_prompt: prompt,
-                    debug: cli.debug,
-                },
-            )?;
-            println!("{result}");
+            // let mut executor = WorkflowExecutor::new(build_llm_client(cli.real_llm));
+            // let result = executor.execute(
+            //     selected,
+            //     ExecutionInput {
+            //         user_prompt: prompt,
+            //         debug: cli.debug,
+            //     },
+            // )?;
+            // println!("{result}");
         }
         Commands::RunSkill { skill_name, prompt } => {
             let skill = skills

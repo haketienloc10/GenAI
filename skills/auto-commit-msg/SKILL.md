@@ -17,7 +17,7 @@ permissions:
   allowed_runners: [bash]
   allowed_paths:
     - scripts/
-  network_access: false
+  network_access: true
   write_access: false
 
 response_format:

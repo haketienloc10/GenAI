@@ -108,6 +108,9 @@ impl LlmClient for GeminiLlmClient {
 
         debug!(model = effective_model, "Sending request to Gemini");
 
+        dbg!(&url);
+        dbg!(&request_body);
+
         let response = self
             .http
             .post(url)
