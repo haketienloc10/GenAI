@@ -23,7 +23,7 @@ pub fn select_skill<'a>(
 
     if let Some(client) = llm {
         let prompt = build_selector_prompt(user_input, skills);
-        if let Ok(resp) = client.generate("selector", &prompt) {
+        if let Ok(resp) = client.generate("", &prompt) {
             if let Ok(parsed) = serde_json::from_str::<SelectorResponse>(&resp) {
                 let _ = (parsed.confidence, &parsed.reason);
                 if let Some(skill) = skills.iter().find(|s| s.metadata.name == parsed.skill) {
