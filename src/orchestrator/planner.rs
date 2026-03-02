@@ -48,7 +48,7 @@ impl Planner {
         let prompt = build_planner_prompt(user_input, skills);
         let raw = self
             .llm
-            .generate("planner", &prompt)
+            .generate("", &prompt)
             .map_err(|err| anyhow!("Planner LLM request failed: {err}"))?;
 
         match parse_and_validate_plan(&raw, skills) {
@@ -65,7 +65,7 @@ impl Planner {
                 );
                 let repaired_raw = self
                     .llm
-                    .generate("planner", &repair_prompt)
+                    .generate("", &repair_prompt)
                     .map_err(|err| anyhow!("Planner correction request failed: {err}"))?;
 
                 parse_and_validate_plan(&repaired_raw, skills).map_err(|repair_err| {
