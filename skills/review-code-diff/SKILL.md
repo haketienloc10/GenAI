@@ -61,7 +61,7 @@ if: "{{diff}} == ''"
 ```genai-step
 id: review_changes
 type: llm
-model: gemini-2.5-flash
+model: gemini-3-flash-preview
 input_vars: [diff]
 prompt: |
   You are a senior software engineer doing a PR review.
