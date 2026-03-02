@@ -144,6 +144,13 @@ fn main() -> Result<()> {
             let planner = Planner::new(build_llm_client(cli.real_llm));
             info!("Planning execution...");
             let mut plan = planner.generate_plan(&prompt, &skills)?;
+            let selected_skills = plan
+                .steps
+                .iter()
+                .map(|step| step.skill_name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            info!("Selected skills: [{selected_skills}]");
 
             if force_sequential {
                 plan.mode = ExecutionMode::Sequential;

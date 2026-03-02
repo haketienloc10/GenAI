@@ -24,7 +24,9 @@ impl PlanExecutionResult {
     pub fn combined_output(&self) -> String {
         self.outputs
             .iter()
-            .map(|(skill_name, result)| format!("[{skill_name}]\n{}", result.output.trim()))
+            .map(|(skill_name, result)| {
+                format!("## {}\n{}", section_title(skill_name), result.output.trim())
+            })
             .collect::<Vec<_>>()
             .join("\n\n")
     }
@@ -109,9 +111,15 @@ impl OrchestratorExecutor {
     ) -> Result<PlanExecutionResult> {
         let mut outputs = Vec::with_capacity(plan.steps.len());
 
-        for step in &plan.steps {
+        let total_steps = plan.steps.len();
+        for (index, step) in plan.steps.iter().enumerate() {
             let skill = self.skill_or_err(&step.skill_name)?;
-            info!("Executing skill: {}", step.skill_name);
+            info!(
+                "Executing step {}/{}: {}",
+                index + 1,
+                total_steps,
+                step.skill_name
+            );
 
             let mut vars = global_context.variables.clone();
             merge_json_input(&mut vars, &step.input);
@@ -156,7 +164,7 @@ impl OrchestratorExecutor {
             merge_json_input(&mut vars, &step.input);
             let prompt = user_prompt.to_string();
 
-            info!("Executing skill: {}", skill_name);
+            info!("Executing parallel skill: {}", skill_name);
             let handle = tokio::spawn(async move {
                 let result = execute_skill_with_factory(
                     llm_factory,
@@ -206,6 +214,47 @@ impl OrchestratorExecutor {
         self.skills_by_name
             .get(skill_name)
             .ok_or_else(|| anyhow!("Skill not found in plan: {skill_name}"))
+    }
+}
+
+fn section_title(skill_name: &str) -> &str {
+    match skill_name {
+        "review-code-diff" => "Review",
+        "auto-commit-msg" => "Commit message",
+        _ => skill_name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn combined_output_uses_review_and_commit_headers() {
+        let result = PlanExecutionResult {
+            outputs: vec![
+                (
+                    "review-code-diff".to_string(),
+                    SkillResult {
+                        output: "Nhận xét".to_string(),
+                        context: HashMap::new(),
+                    },
+                ),
+                (
+                    "auto-commit-msg".to_string(),
+                    SkillResult {
+                        output: "fix(core): improve planner".to_string(),
+                        context: HashMap::new(),
+                    },
+                ),
+            ],
+            global_context: GlobalExecutionContext::default(),
+        };
+
+        assert_eq!(
+            result.combined_output(),
+            "## Review\nNhận xét\n\n## Commit message\nfix(core): improve planner"
+        );
     }
 }
 
