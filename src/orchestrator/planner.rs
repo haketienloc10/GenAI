@@ -84,8 +84,32 @@ fn parse_and_validate_plan(raw: &str, skills: &[Skill]) -> Result<ExecutionPlan>
 }
 
 fn parse_plan_json(raw: &str) -> Result<ExecutionPlan> {
-    serde_json::from_str::<ExecutionPlan>(raw)
+    let cleaned = extract_json_payload(raw);
+    serde_json::from_str::<ExecutionPlan>(&cleaned)
         .map_err(|err| anyhow!("Invalid planner JSON: {err}. Raw response: {raw}"))
+}
+
+fn extract_json_payload(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with("```") {
+        let mut lines = trimmed.lines();
+        let _ = lines.next();
+        let body = lines
+            .take_while(|line| line.trim() != "```")
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !body.trim().is_empty() {
+            return body;
+        }
+    }
+
+    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if start < end {
+            return trimmed[start..=end].to_string();
+        }
+    }
+
+    trimmed.to_string()
 }
 
 fn validate_plan(mut plan: ExecutionPlan, skills: &[Skill]) -> Result<ExecutionPlan> {
@@ -184,12 +208,19 @@ mod tests {
                 .ok_or_else(|| anyhow!("No mocked planner response"))
         }
     }
-
     #[test]
     fn planner_json_parsing_valid_and_invalid() {
         let valid = r#"{"mode":"sequential","steps":[{"id":"step1","skill":"review-code-diff","rationale":"review first","inputs":{}}]}"#;
         assert!(parse_plan_json(valid).is_ok());
         assert!(parse_plan_json("not-json").is_err());
+    }
+
+    #[test]
+    fn planner_json_parsing_accepts_markdown_fence() {
+        let fenced = r#"```json
+{"mode":"sequential","steps":[{"id":"step1","skill":"review-code-diff","rationale":"review first","inputs":{}}]}
+```"#;
+        assert!(parse_plan_json(fenced).is_ok());
     }
 
     #[test]
