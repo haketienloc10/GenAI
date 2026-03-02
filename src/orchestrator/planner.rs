@@ -3,12 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::llm::client::LlmClient;
-use crate::llm::prompt::build_planner_prompt;
+use crate::llm::prompt::{build_planner_prompt, build_planner_repair_prompt};
 use crate::skill::model::Skill;
-use crate::skill::selector::select_skill;
-
-const REVIEW_SKILL: &str = "review-code-diff";
-const COMMIT_SKILL: &str = "auto-commit-msg";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -19,10 +15,14 @@ pub enum ExecutionMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlannedSkill {
+    #[serde(default)]
+    pub id: String,
     #[serde(rename = "skill")]
     pub skill_name: String,
     #[serde(default)]
-    pub input: Value,
+    pub rationale: String,
+    #[serde(default, rename = "inputs", alias = "input")]
+    pub inputs: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,164 +45,115 @@ impl Planner {
             return Err(anyhow!("No skills found"));
         }
 
-        if let Some(intent_plan) = build_intent_plan(user_input, skills) {
-            return Ok(intent_plan);
-        }
-
         let prompt = build_planner_prompt(user_input, skills);
-        let raw = match self.llm.generate("planner", &prompt) {
-            Ok(raw) => raw,
-            Err(err) => {
-                tracing::warn!(
-                    "Planner LLM request failed; falling back to single-skill selection: {err}"
-                );
-                return fallback_single_skill(user_input, skills);
-            }
-        };
+        let raw = self
+            .llm
+            .generate("", &prompt)
+            .map_err(|err| anyhow!("Planner LLM request failed: {err}"))?;
 
-        match serde_json::from_str::<ExecutionPlan>(&raw).and_then(validate_plan) {
-            Ok(plan) => Ok(ensure_multi_intent_plan(user_input, skills, plan)),
-            Err(parse_err) => {
+        match parse_and_validate_plan(&raw, skills) {
+            Ok(plan) => Ok(plan),
+            Err(validation_err) => {
                 tracing::warn!(
-                    "Planner returned invalid plan JSON; falling back to single-skill selection: {parse_err}"
+                    "Planner returned invalid plan; requesting one correction pass: {validation_err}"
                 );
-                fallback_single_skill(user_input, skills)
+                let repair_prompt = build_planner_repair_prompt(
+                    user_input,
+                    skills,
+                    &raw,
+                    &validation_err.to_string(),
+                );
+                let repaired_raw = self
+                    .llm
+                    .generate("", &repair_prompt)
+                    .map_err(|err| anyhow!("Planner correction request failed: {err}"))?;
+
+                parse_and_validate_plan(&repaired_raw, skills).map_err(|repair_err| {
+                    anyhow!(
+                        "Planner returned invalid plan after retry: {repair_err}. Raw response: {repaired_raw}"
+                    )
+                })
             }
         }
     }
 }
 
-fn validate_plan(plan: ExecutionPlan) -> Result<ExecutionPlan, serde_json::Error> {
-    if plan.steps.is_empty() {
-        return Err(serde_json::Error::io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Plan steps cannot be empty",
-        )));
+fn parse_and_validate_plan(raw: &str, skills: &[Skill]) -> Result<ExecutionPlan> {
+    let plan = parse_plan_json(raw)?;
+    validate_plan(plan, skills)
+}
+
+fn parse_plan_json(raw: &str) -> Result<ExecutionPlan> {
+    let cleaned = extract_json_payload(raw);
+    serde_json::from_str::<ExecutionPlan>(&cleaned)
+        .map_err(|err| anyhow!("Invalid planner JSON: {err}. Raw response: {raw}"))
+}
+
+fn extract_json_payload(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with("```") {
+        let mut lines = trimmed.lines();
+        let _ = lines.next();
+        let body = lines
+            .take_while(|line| line.trim() != "```")
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !body.trim().is_empty() {
+            return body;
+        }
     }
 
-    if plan
-        .steps
-        .iter()
-        .any(|step| step.skill_name.trim().is_empty() || !step.input.is_object())
-    {
-        return Err(serde_json::Error::io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Every step requires non-empty skill and object input",
-        )));
+    if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        if start < end {
+            return trimmed[start..=end].to_string();
+        }
+    }
+
+    trimmed.to_string()
+}
+
+fn validate_plan(mut plan: ExecutionPlan, skills: &[Skill]) -> Result<ExecutionPlan> {
+    if plan.steps.is_empty() {
+        return Err(anyhow!("Plan steps cannot be empty"));
+    }
+
+    for (index, step) in plan.steps.iter_mut().enumerate() {
+        if step.id.trim().is_empty() {
+            step.id = format!("step{}", index + 1);
+        }
+        if step.rationale.trim().is_empty() {
+            step.rationale = "No rationale provided".to_string();
+        }
+        if step.skill_name.trim().is_empty() {
+            return Err(anyhow!("Plan step {} has empty skill", index + 1));
+        }
+        if !step.inputs.is_object() {
+            return Err(anyhow!(
+                "Plan step {} inputs must be a JSON object",
+                index + 1
+            ));
+        }
+        if !skills
+            .iter()
+            .any(|skill| skill.metadata.name == step.skill_name)
+        {
+            return Err(anyhow!(
+                "Plan step {} references unknown skill '{}'.",
+                index + 1,
+                step.skill_name
+            ));
+        }
     }
 
     Ok(plan)
-}
-
-fn fallback_single_skill(user_input: &str, skills: &[Skill]) -> Result<ExecutionPlan> {
-    if let Some(intent_plan) = build_intent_plan(user_input, skills) {
-        return Ok(intent_plan);
-    }
-
-    let fallback = select_skill(user_input, skills, None)?;
-    Ok(ExecutionPlan {
-        mode: ExecutionMode::Sequential,
-        steps: vec![PlannedSkill {
-            skill_name: fallback.metadata.name.clone(),
-            input: Value::Object(Default::default()),
-        }],
-    })
-}
-
-fn ensure_multi_intent_plan(
-    user_input: &str,
-    skills: &[Skill],
-    plan: ExecutionPlan,
-) -> ExecutionPlan {
-    match detect_intents(user_input) {
-        IntentDetection {
-            wants_review: true,
-            wants_commit: true,
-        } if plan.steps.len() <= 1 => {
-            if let Some(intent_plan) = build_intent_plan(user_input, skills) {
-                tracing::info!(
-                    "Planner returned single skill but both intents were detected; overriding with deterministic two-step plan"
-                );
-                return intent_plan;
-            }
-            plan
-        }
-        _ => plan,
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct IntentDetection {
-    wants_review: bool,
-    wants_commit: bool,
-}
-
-fn detect_intents(user_input: &str) -> IntentDetection {
-    let input = user_input.to_lowercase();
-
-    let review_terms = [
-        "review",
-        "code review",
-        "soát",
-        "đánh giá",
-        "nhận xét",
-        "review code",
-        "review diff",
-    ];
-    let commit_terms = [
-        "commit",
-        "message commit",
-        "commit msg",
-        "conventional commit",
-    ];
-
-    IntentDetection {
-        wants_review: review_terms.iter().any(|term| input.contains(term)),
-        wants_commit: commit_terms.iter().any(|term| input.contains(term)),
-    }
-}
-
-fn build_intent_plan(user_input: &str, skills: &[Skill]) -> Option<ExecutionPlan> {
-    let intents = detect_intents(user_input);
-    if !intents.wants_review && !intents.wants_commit {
-        return None;
-    }
-
-    let has_review_skill = has_skill(skills, REVIEW_SKILL);
-    let has_commit_skill = has_skill(skills, COMMIT_SKILL);
-
-    let mut steps = Vec::new();
-    if intents.wants_review && has_review_skill {
-        steps.push(PlannedSkill {
-            skill_name: REVIEW_SKILL.to_string(),
-            input: Value::Object(Default::default()),
-        });
-    }
-    if intents.wants_commit && has_commit_skill {
-        steps.push(PlannedSkill {
-            skill_name: COMMIT_SKILL.to_string(),
-            input: Value::Object(Default::default()),
-        });
-    }
-
-    if steps.is_empty() {
-        return None;
-    }
-
-    Some(ExecutionPlan {
-        mode: ExecutionMode::Sequential,
-        steps,
-    })
-}
-
-fn has_skill(skills: &[Skill], skill_name: &str) -> bool {
-    skills.iter().any(|skill| skill.metadata.name == skill_name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::skill::model::{Capabilities, Permissions, ResponseFormat, SkillMetadata};
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
 
     fn mock_skill(name: &str) -> Skill {
         Skill {
@@ -236,30 +187,91 @@ mod tests {
         }
     }
 
+    struct QueueLlm {
+        responses: Mutex<VecDeque<String>>,
+    }
+
+    impl QueueLlm {
+        fn new(responses: Vec<String>) -> Self {
+            Self {
+                responses: Mutex::new(VecDeque::from(responses)),
+            }
+        }
+    }
+
+    impl LlmClient for QueueLlm {
+        fn generate(&self, _model: &str, _prompt: &str) -> Result<String> {
+            self.responses
+                .lock()
+                .expect("queue lock")
+                .pop_front()
+                .ok_or_else(|| anyhow!("No mocked planner response"))
+        }
+    }
     #[test]
-    fn detects_both_review_and_commit_intents() {
-        let intents = detect_intents("review code và tạo message commit");
-        assert!(intents.wants_review);
-        assert!(intents.wants_commit);
+    fn planner_json_parsing_valid_and_invalid() {
+        let valid = r#"{"mode":"sequential","steps":[{"id":"step1","skill":"review-code-diff","rationale":"review first","inputs":{}}]}"#;
+        assert!(parse_plan_json(valid).is_ok());
+        assert!(parse_plan_json("not-json").is_err());
     }
 
     #[test]
-    fn builds_two_step_plan_when_both_intents_are_present() {
-        let skills = vec![mock_skill(REVIEW_SKILL), mock_skill(COMMIT_SKILL)];
-        let plan = build_intent_plan("review diff rồi tạo commit message", &skills)
-            .expect("expected plan");
+    fn planner_json_parsing_accepts_markdown_fence() {
+        let fenced = r#"```json
+{"mode":"sequential","steps":[{"id":"step1","skill":"review-code-diff","rationale":"review first","inputs":{}}]}
+```"#;
+        assert!(parse_plan_json(fenced).is_ok());
+    }
+
+    #[test]
+    fn validation_rejects_unknown_skill() {
+        let skills = vec![mock_skill("review-code-diff")];
+        let plan = ExecutionPlan {
+            mode: ExecutionMode::Sequential,
+            steps: vec![PlannedSkill {
+                id: "step1".to_string(),
+                skill_name: "unknown-skill".to_string(),
+                rationale: "x".to_string(),
+                inputs: Value::Object(Default::default()),
+            }],
+        };
+
+        assert!(validate_plan(plan, &skills).is_err());
+    }
+
+    #[test]
+    fn generates_two_step_plan_for_review_and_commit_request() {
+        let skills = vec![
+            mock_skill("review-code-diff"),
+            mock_skill("auto-commit-msg"),
+        ];
+        let llm = QueueLlm::new(vec![
+            r#"{"mode":"sequential","steps":[{"id":"step1","skill":"review-code-diff","rationale":"review","inputs":{}},{"id":"step2","skill":"auto-commit-msg","rationale":"commit","inputs":{}}]}"#.to_string(),
+        ]);
+        let planner = Planner::new(Box::new(llm));
+
+        let plan = planner
+            .generate_plan("review code và tạo message commit", &skills)
+            .expect("plan should be generated");
 
         assert_eq!(plan.steps.len(), 2);
-        assert_eq!(plan.steps[0].skill_name, REVIEW_SKILL);
-        assert_eq!(plan.steps[1].skill_name, COMMIT_SKILL);
+        assert_eq!(plan.steps[0].skill_name, "review-code-diff");
+        assert_eq!(plan.steps[1].skill_name, "auto-commit-msg");
     }
 
     #[test]
-    fn builds_single_step_plan_for_commit_only_intent() {
-        let skills = vec![mock_skill(REVIEW_SKILL), mock_skill(COMMIT_SKILL)];
-        let plan = build_intent_plan("tạo commit message", &skills).expect("expected plan");
+    fn retries_once_when_first_plan_is_invalid() {
+        let skills = vec![mock_skill("review-code-diff")];
+        let llm = QueueLlm::new(vec![
+            "not-json".to_string(),
+            r#"{"mode":"sequential","steps":[{"id":"step1","skill":"review-code-diff","rationale":"fixed","inputs":{}}]}"#.to_string(),
+        ]);
+        let planner = Planner::new(Box::new(llm));
 
+        let plan = planner
+            .generate_plan("review", &skills)
+            .expect("planner should recover on retry");
         assert_eq!(plan.steps.len(), 1);
-        assert_eq!(plan.steps[0].skill_name, COMMIT_SKILL);
+        assert_eq!(plan.steps[0].skill_name, "review-code-diff");
     }
 }

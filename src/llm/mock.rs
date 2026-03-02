@@ -12,8 +12,10 @@ impl MockLlmClient {
 
 impl LlmClient for MockLlmClient {
     fn generate(&self, model: &str, prompt: &str) -> Result<String> {
-        if model == "selector" {
-            if prompt.to_lowercase().contains("commit") {
+        let prompt_lc = prompt.to_lowercase();
+
+        if model.trim().is_empty() && prompt_lc.contains("select best skill for user request") {
+            if prompt_lc.contains("commit") {
                 return Ok(
                     r#"{"skill":"auto-commit-msg","confidence":0.92,"reason":"commit related request"}"#
                         .to_string(),
@@ -24,9 +26,17 @@ impl LlmClient for MockLlmClient {
             );
         }
 
-        if model == "planner" {
+        if model.trim().is_empty()
+            && prompt_lc.contains("you are a planning engine for a developer agent")
+        {
+            if prompt_lc.contains("review") && prompt_lc.contains("commit") {
+                return Ok(
+                    r#"{"mode":"sequential","steps":[{"id":"step1","skill":"review-code-diff","rationale":"review changes first","inputs":{}},{"id":"step2","skill":"auto-commit-msg","rationale":"then generate commit message","inputs":{}}]}"#
+                        .to_string(),
+                );
+            }
             return Ok(
-                r#"{"mode":"sequential","steps":[{"skill":"auto-commit-msg","input":{}}]}"#
+                r#"{"mode":"sequential","steps":[{"id":"step1","skill":"auto-commit-msg","rationale":"default","inputs":{}}]}"#
                     .to_string(),
             );
         }

@@ -24,8 +24,14 @@ impl PlanExecutionResult {
     pub fn combined_output(&self) -> String {
         self.outputs
             .iter()
-            .map(|(skill_name, result)| {
-                format!("## {}\n{}", section_title(skill_name), result.output.trim())
+            .enumerate()
+            .map(|(index, (skill_name, result))| {
+                format!(
+                    "## Step {}: {}\n{}",
+                    index + 1,
+                    skill_name,
+                    result.output.trim()
+                )
             })
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -122,7 +128,7 @@ impl OrchestratorExecutor {
             );
 
             let mut vars = global_context.variables.clone();
-            merge_json_input(&mut vars, &step.input);
+            merge_json_input(&mut vars, &step.inputs);
 
             let skill_result = execute_skill_with_factory(
                 self.llm_factory.clone(),
@@ -161,7 +167,7 @@ impl OrchestratorExecutor {
             let llm_factory = self.llm_factory.clone();
             let skill_name = step.skill_name.clone();
             let mut vars = global_context.variables.clone();
-            merge_json_input(&mut vars, &step.input);
+            merge_json_input(&mut vars, &step.inputs);
             let prompt = user_prompt.to_string();
 
             info!("Executing parallel skill: {}", skill_name);
@@ -217,20 +223,12 @@ impl OrchestratorExecutor {
     }
 }
 
-fn section_title(skill_name: &str) -> &str {
-    match skill_name {
-        "review-code-diff" => "Review",
-        "auto-commit-msg" => "Commit message",
-        _ => skill_name,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn combined_output_uses_review_and_commit_headers() {
+    fn combined_output_uses_step_headers() {
         let result = PlanExecutionResult {
             outputs: vec![
                 (
@@ -253,7 +251,7 @@ mod tests {
 
         assert_eq!(
             result.combined_output(),
-            "## Review\nNhận xét\n\n## Commit message\nfix(core): improve planner"
+            "## Step 1: review-code-diff\nNhận xét\n\n## Step 2: auto-commit-msg\nfix(core): improve planner"
         );
     }
 }

@@ -20,7 +20,58 @@ User input: {user_input}\nAvailable skills:\n{skills_text}"
 }
 
 pub fn build_planner_prompt(user_input: &str, skills: &[Skill]) -> String {
-    let skills_json = skills
+    let skills_catalog = build_skills_catalog(skills);
+
+    format!(
+        "SYSTEM:\n\
+You are a planning engine for a developer agent. Your job is to produce a minimal plan using available skills.\n\n\
+USER:\n\
+User request:\n\
+{}\n\n\
+Available skills (do not invent new skills):\n\
+{}\n\n\
+Rules:\n\
+- Output MUST be valid JSON ONLY. No markdown. No extra text.\n\
+- You MUST output a plan with 1 or more steps.\n\
+- Each step MUST reference an existing skill by exact `name`.\n\
+- If the request asks for multiple tasks, include multiple skills.\n\
+- Prefer sequential mode unless steps are independent.\n\
+- When asked to review code AND create a commit message, you MUST include these steps in order:\n\
+  1. review-code-diff\n\
+  2. auto-commit-msg\n\n\
+Return JSON with this schema:\n\
+{{\n\
+  \"mode\": \"sequential\",\n\
+  \"steps\": [\n\
+    {{ \"id\": \"step1\", \"skill\": \"<skill_name>\", \"rationale\": \"<short>\", \"inputs\": {{}} }}\n\
+  ]\n\
+}}",
+        user_input, skills_catalog
+    )
+}
+
+pub fn build_planner_repair_prompt(
+    user_input: &str,
+    skills: &[Skill],
+    invalid_json: &str,
+    validation_error: &str,
+) -> String {
+    let skills_catalog = build_skills_catalog(skills);
+
+    format!(
+        "Your previous planner response was invalid. Return corrected JSON only.\n\
+User request:\n{}\n\n\
+Available skills:\n{}\n\n\
+Validation error:\n{}\n\n\
+Invalid response:\n{}\n\n\
+Return corrected JSON matching schema:\n\
+{{\"mode\":\"sequential\",\"steps\":[{{\"id\":\"step1\",\"skill\":\"<skill_name>\",\"rationale\":\"<short>\",\"inputs\":{{}}}}]}}",
+        user_input, skills_catalog, validation_error, invalid_json
+    )
+}
+
+fn build_skills_catalog(skills: &[Skill]) -> String {
+    skills
         .iter()
         .map(|skill| {
             format!(
@@ -34,22 +85,7 @@ pub fn build_planner_prompt(user_input: &str, skills: &[Skill]) -> String {
             )
         })
         .collect::<Vec<_>>()
-        .join(",");
-
-    format!(
-        "You are a deterministic planner. Temperature is 0.\n\
-Given a user input and available skills metadata, return ONLY strict JSON with this schema:\n\
-{{\n  \"mode\": \"sequential\" | \"parallel\",\n  \"steps\": [\n    {{\n      \"skill\": \"skill_name\",\n      \"input\": {{}}\n    }}\n  ]\n}}\n\
-Rules:\n\
-- Use parallel only when skill tasks are independent.\n\
-- Use sequential when any dependency exists between steps.\n\
-- Steps must reference only skills in the provided list.\n\
-- Return no markdown, no explanation, JSON only.\n\
-User input: {}\n\
-Available skills metadata JSON array: [{}]",
-        escape_json_string(user_input),
-        skills_json,
-    )
+        .join(",")
 }
 
 fn escape_json_string(raw: &str) -> String {
