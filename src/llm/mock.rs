@@ -25,8 +25,15 @@ impl LlmClient for MockLlmClient {
         }
 
         if model == "planner" {
+            if prompt.to_lowercase().contains("review") && prompt.to_lowercase().contains("commit")
+            {
+                return Ok(
+                    r#"{"mode":"sequential","steps":[{"id":"step1","skill":"review-code-diff","rationale":"review changes first","inputs":{}},{"id":"step2","skill":"auto-commit-msg","rationale":"then generate commit message","inputs":{}}]}"#
+                        .to_string(),
+                );
+            }
             return Ok(
-                r#"{"mode":"sequential","steps":[{"skill":"auto-commit-msg","input":{}}]}"#
+                r#"{"mode":"sequential","steps":[{"id":"step1","skill":"auto-commit-msg","rationale":"default","inputs":{}}]}"#
                     .to_string(),
             );
         }
