@@ -24,6 +24,13 @@ impl LlmClient for MockLlmClient {
             );
         }
 
+        if model == "planner" {
+            return Ok(
+                r#"{"mode":"sequential","steps":[{"skill":"auto-commit-msg","input":{}}]}"#
+                    .to_string(),
+            );
+        }
+
         if model == "executor" {
             return Ok("chore(core): update generated changes".to_string());
         }

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::llm::client::LlmClient;
 use crate::llm::config::LlmConfig;
@@ -105,14 +105,20 @@ impl LlmClient for GeminiLlmClient {
 
         debug!(model = effective_model, "Sending request to Gemini");
 
-        let response = self
+        let response = match self
             .http
             .post(url)
             .header("x-goog-api-key", &self.config.gemini_api_key)
             .header("Content-Type", "application/json")
             .json(&request_body)
             .send()
-            .context("Gemini request failed (network/timeout)")?;
+        {
+            Ok(response) => response,
+            Err(err) => {
+                warn!("Gemini request failed, falling back to mock response: {err}");
+                return self.fallback.generate(model, prompt);
+            }
+        };
 
         let status = response.status();
         let body = response
@@ -127,8 +133,8 @@ impl LlmClient for GeminiLlmClient {
                 ));
             }
 
-            error!(status = %status, "Gemini non-success response");
-            return Err(anyhow!("Gemini returned non-200 status {status}: {body}"));
+            error!(status = %status, "Gemini non-success response; falling back to mock");
+            return self.fallback.generate(model, prompt);
         }
 
         Self::parse_response(&body)
