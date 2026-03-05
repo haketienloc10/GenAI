@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use genai::llm::client::LlmClient;
 use genai::llm::config::LlmConfig;
-use genai::llm::gemini::GeminiLlmClient;
+use genai::llm::openai::OpenAiLlmClient;
 use genai::llm::mock::MockLlmClient;
 use genai::orchestrator::executor::{GlobalExecutionContext, OrchestratorExecutor};
 use genai::orchestrator::planner::{ExecutionMode, Planner};
@@ -68,17 +68,17 @@ fn init_env() {
 }
 
 fn build_llm_client(real_llm: bool) -> Box<dyn LlmClient> {
-    let has_key = std::env::var("GEMINI_API_KEY").is_ok();
+    let has_key = std::env::var("OPENAI_API_KEY").is_ok();
     let should_use_real = real_llm || has_key;
 
     if should_use_real {
-        match LlmConfig::from_env().and_then(GeminiLlmClient::new) {
+        match LlmConfig::from_env().and_then(OpenAiLlmClient::new) {
             Ok(client) => {
-                info!("Using GeminiLlmClient");
+                info!("Using OpenAiLlmClient");
                 return Box::new(client);
             }
             Err(err) => {
-                warn!("Unable to initialize GeminiLlmClient, falling back to mock: {err}");
+                warn!("Unable to initialize OpenAiLlmClient, falling back to mock: {err}");
             }
         }
     }
