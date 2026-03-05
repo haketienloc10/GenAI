@@ -1,25 +1,28 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
-    pub gemini_api_key: String,
-    pub gemini_model: String,
-    pub gemini_base_url: String,
+    pub openai_base_url: String,
+    pub openai_api_key: Option<String>,
+    pub openai_model: String,
 }
 
 impl LlmConfig {
     pub fn from_env() -> Result<Self> {
-        let gemini_api_key = std::env::var("GEMINI_API_KEY")
-            .context("Missing GEMINI_API_KEY in environment or .env")?;
-        let gemini_model =
-            std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3-flash-preview".to_string());
-        let gemini_base_url = std::env::var("GEMINI_BASE_URL")
-            .unwrap_or_else(|_| "https://generativelanguage.googleapis.com".to_string());
+        let openai_base_url = std::env::var("OPENAI_BASE_URL")
+            .or_else(|_| std::env::var("OPENROUTERLOCAL_BASE_URL"))
+            .unwrap_or_else(|_| "http://127.0.0.1:18790/v1".to_string());
+        let openai_api_key = std::env::var("OPENAI_API_KEY")
+            .or_else(|_| std::env::var("OPENROUTERLOCAL_API_KEY"))
+            .ok();
+        let openai_model = std::env::var("OPENAI_MODEL")
+            .or_else(|_| std::env::var("OPENROUTERLOCAL_MODEL"))
+            .unwrap_or_else(|_| "qwen-cli".to_string());
 
         Ok(Self {
-            gemini_api_key,
-            gemini_model,
-            gemini_base_url,
+            openai_base_url,
+            openai_api_key,
+            openai_model,
         })
     }
 }
@@ -31,14 +34,14 @@ mod tests {
     #[test]
     fn load_config_from_env() {
         unsafe {
-            std::env::set_var("GEMINI_API_KEY", "test-key");
-            std::env::set_var("GEMINI_MODEL", "test-model");
-            std::env::set_var("GEMINI_BASE_URL", "https://example.com");
+            std::env::set_var("OPENAI_BASE_URL", "http://localhost:9999/v1");
+            std::env::set_var("OPENAI_API_KEY", "openai-key");
+            std::env::set_var("OPENAI_MODEL", "local-model");
         }
 
         let cfg = LlmConfig::from_env().expect("expected config from env");
-        assert_eq!(cfg.gemini_api_key, "test-key");
-        assert_eq!(cfg.gemini_model, "test-model");
-        assert_eq!(cfg.gemini_base_url, "https://example.com");
+        assert_eq!(cfg.openai_base_url, "http://localhost:9999/v1");
+        assert_eq!(cfg.openai_api_key.as_deref(), Some("openai-key"));
+        assert_eq!(cfg.openai_model, "local-model");
     }
 }
