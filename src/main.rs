@@ -73,13 +73,25 @@ fn build_llm_client(real_llm: bool) -> Box<dyn LlmClient> {
     let should_use_real = real_llm || has_openai_base;
 
     if should_use_real {
-        match LlmConfig::from_env().and_then(OpenAiCompatLlmClient::new) {
-            Ok(client) => {
-                info!("Using OpenAiCompatLlmClient");
-                return Box::new(client);
+        match LlmConfig::from_env() {
+            Ok(config) => {
+                let model = config.openai_model.clone();
+                match OpenAiCompatLlmClient::new(config) {
+                    Ok(client) => {
+                        info!("Using OpenAiCompatLlmClient model {model}");
+                        return Box::new(client);
+                    }
+                    Err(err) => {
+                        warn!(
+                            "Unable to initialize OpenAiCompatLlmClient (model {model}), falling back to mock: {err}"
+                        );
+                    }
+                }
             }
             Err(err) => {
-                warn!("Unable to initialize OpenAiCompatLlmClient, falling back to mock: {err}");
+                warn!(
+                    "Unable to load OpenAiCompatLlmClient config from env, falling back to mock: {err}"
+                );
             }
         }
     }
