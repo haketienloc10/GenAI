@@ -21,6 +21,15 @@ genai run "generate commit message" --skills-dir ./skills
 genai run-skill auto-commit-msg "generate commit" --skills-dir ./skills
 ```
 
+## LLM configuration
+
+`genai` uses an OpenAI-compatible chat-completions API for real LLM calls.
+
+- OpenAI-compatible (default local gateway):
+  - `OPENAI_BASE_URL` (default: `http://127.0.0.1:18790/v1`)
+  - `OPENAI_MODEL` (default: `qwen-cli`)
+  - `OPENAI_API_KEY` (optional)
+
 ## Skill format
 
 Each skill must have `SKILL.md` with:
